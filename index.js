@@ -1,25 +1,20 @@
+
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 
-const GROUP_ID = process.env.GROUP_ID; // Get group ID from .env
-const ROBLOX_API_KEY = process.env.ROBLOX_API_KEY; // Get API key from .env
+const GROUP_ID = process.env.GROUP_ID;
+const ROBLOX_API_KEY = process.env.ROBLOX_API_KEY;
 
 async function setRank(userId, rankId) {
     try {
         const response = await axios.patch(
             `https://groups.roblox.com/v1/groups/${GROUP_ID}/users/${userId}`,
-            {
-                role: rankId
-            },
-            {
-                headers: {
-                    'x-api-key': ROBLOX_API_KEY
-                }
-            }
+            { role: rankId },
+            { headers: { 'x-api-key': ROBLOX_API_KEY } }
         );
         return response.data;
     } catch (error) {
@@ -30,7 +25,6 @@ async function setRank(userId, rankId) {
 
 app.post('/setRank', async (req, res) => {
     const { userId, rankId } = req.body;
-
     try {
         const result = await setRank(userId, rankId);
         res.status(200).json({ message: "Rank changed successfully", result });
