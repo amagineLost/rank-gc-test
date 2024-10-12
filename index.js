@@ -6,18 +6,18 @@ const app = express();
 app.use(express.json());
 
 const GROUP_ID = process.env.GROUP_ID;
-const ROBLOX_API_KEY = process.env.ROBLOX_API_KEY;
+const ROBLOX_COOKIE = process.env.ROBLOSECURITY; // Use the ROBLOSECURITY environment variable
 
 // Function to set rank on Roblox group
 async function setRank(userId, rankId) {
     try {
-        console.log(`Attempting to set rank for userId: ${userId}, rankId: ${rankId}`);
+        console.log(`Sending rank change request for userId: ${userId}, rankId: ${rankId}`);
         const response = await axios.patch(
             `https://groups.roblox.com/v1/groups/${GROUP_ID}/users/${userId}`,
             { role: rankId },
             {
                 headers: {
-                    'x-api-key': ROBLOX_API_KEY,
+                    'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`, // Add the ROBLOSECURITY cookie to the request headers
                     'Content-Type': 'application/json',
                 },
             }
