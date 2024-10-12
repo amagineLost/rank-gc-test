@@ -8,8 +8,36 @@ app.use(express.json());
 const GROUP_ID = process.env.GROUP_ID;
 const ROBLOX_COOKIE = process.env.ROBLOSECURITY; // Use the ROBLOSECURITY environment variable
 
+let csrfToken = '';
+
+// Function to get CSRF Token
+async function getCsrfToken() {
+    try {
+        const response = await axios.post(
+            `https://auth.roblox.com/v1/login`, // This endpoint gives us a CSRF token without logging in
+            {},
+            {
+                headers: {
+                    'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`
+                }
+            }
+        );
+        csrfToken = response.headers['x-csrf-token'];
+        console.log("CSRF Token fetched successfully");
+    } catch (error) {
+        if (error.response && error.response.headers['x-csrf-token']) {
+            csrfToken = error.response.headers['x-csrf-token'];
+            console.log("CSRF Token from error response:", csrfToken);
+        } else {
+            console.error('Failed to fetch CSRF token:', error.message);
+            throw error;
+        }
+    }
+}
+
 // Function to set rank on Roblox group
 async function setRank(userId, rankId) {
+    await getCsrfToken(); // Ensure we have the CSRF token
     try {
         console.log(`Sending rank change request for userId: ${userId}, rankId: ${rankId}`);
         const response = await axios.patch(
@@ -18,6 +46,7 @@ async function setRank(userId, rankId) {
             {
                 headers: {
                     'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`, // Add the ROBLOSECURITY cookie to the request headers
+                    'X-CSRF-Token': csrfToken, // Use the fetched CSRF token
                     'Content-Type': 'application/json',
                 },
             }
