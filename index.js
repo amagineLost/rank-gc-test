@@ -8,31 +8,41 @@ app.use(express.json());
 const GROUP_ID = process.env.GROUP_ID;
 const ROBLOX_COOKIE = process.env.ROBLOSECURITY; // Use the ROBLOSECURITY environment variable
 
-let csrfToken = '';
+let csrfToken = ''; // Cache CSRF Token
+let csrfTokenLastFetched = 0; // Track when the CSRF token was last fetched
+const CSRF_TOKEN_EXPIRATION = 600000; // 10 minutes in milliseconds
 
 // Function to get CSRF Token
-async function getCsrfToken() {
-    try {
-        const response = await axios.post(
-            `https://auth.roblox.com/v1/login`, // This endpoint gives us a CSRF token without logging in
-            {},
-            {
-                headers: {
-                    'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`
+async function getCsrfToken(forceRefresh = false) {
+    const now = Date.now();
+
+    // Check if CSRF token is expired or a refresh is forced
+    if (!csrfToken || forceRefresh || now - csrfTokenLastFetched > CSRF_TOKEN_EXPIRATION) {
+        try {
+            const response = await axios.post(
+                `https://auth.roblox.com/v1/login`, // This endpoint gives us a CSRF token without logging in
+                {},
+                {
+                    headers: {
+                        'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`
+                    }
                 }
+            );
+            csrfToken = response.headers['x-csrf-token'];
+            csrfTokenLastFetched = now;
+            console.log("CSRF Token fetched successfully");
+        } catch (error) {
+            if (error.response && error.response.headers['x-csrf-token']) {
+                csrfToken = error.response.headers['x-csrf-token'];
+                csrfTokenLastFetched = now;
+                console.log("CSRF Token from error response:", csrfToken);
+            } else {
+                console.error('Failed to fetch CSRF token:', error.message);
+                throw error;
             }
-        );
-        csrfToken = response.headers['x-csrf-token'];
-        console.log("CSRF Token fetched successfully");
-    } catch (error) {
-        if (error.response && error.response.headers['x-csrf-token']) {
-            csrfToken = error.response.headers['x-csrf-token'];
-            console.log("CSRF Token from error response:", csrfToken);
-        } else {
-            console.error('Failed to fetch CSRF token:', error.message);
-            throw error;
         }
     }
+    return csrfToken;
 }
 
 // Function to set rank on Roblox group
@@ -42,11 +52,11 @@ async function setRank(userId, rankId) {
         console.log(`Sending rank change request for userId: ${userId}, rankId: ${rankId}`);
         const response = await axios.patch(
             `https://groups.roblox.com/v1/groups/${GROUP_ID}/users/${userId}`,
-            { role: rankId },
+            { roleId: rankId }, // Correct key name is roleId, not role
             {
                 headers: {
-                    'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`, // Add the ROBLOSECURITY cookie to the request headers
-                    'X-CSRF-Token': csrfToken, // Use the fetched CSRF token
+                    'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`,
+                    'X-CSRF-Token': csrfToken,
                     'Content-Type': 'application/json',
                 },
             }
@@ -54,6 +64,13 @@ async function setRank(userId, rankId) {
         console.log("Rank change response:", response.data);
         return response.data;
     } catch (error) {
+        // If CSRF token is invalid, retry with a new token
+        if (error.response && error.response.status === 403 && error.response.data.errors[0].code === 1) {
+            console.log("Invalid CSRF Token, retrying...");
+            await getCsrfToken(true); // Force refresh CSRF token
+            return setRank(userId, rankId); // Retry the request
+        }
+
         console.error("Error setting rank:", error.response ? error.response.data : error.message);
         throw error;
     }
