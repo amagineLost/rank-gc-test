@@ -24,7 +24,8 @@ async function getCsrfToken(forceRefresh = false) {
                 {},
                 {
                     headers: {
-                        'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`
+                        'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`,
+                        'Content-Type': 'application/json'
                     }
                 }
             );
@@ -64,7 +65,6 @@ async function setRank(userId, rankId) {
         console.log("Rank change response:", response.data);
         return response.data;
     } catch (error) {
-        // If CSRF token is invalid, retry with a new token
         if (error.response && error.response.status === 403 && error.response.data.errors[0].code === 1) {
             console.log("Invalid CSRF Token, retrying...");
             await getCsrfToken(true); // Force refresh CSRF token
@@ -79,10 +79,14 @@ async function setRank(userId, rankId) {
 // POST endpoint to change rank
 app.post('/setRank', async (req, res) => {
     const { userId, rankId } = req.body;
+
+    // Input validation
     if (!userId || !rankId) {
         return res.status(400).json({ error: "Missing userId or rankId" });
     }
+
     try {
+        console.log(`Received request to set rank for userId: ${userId}, rankId: ${rankId}`);
         const result = await setRank(userId, rankId);
         res.status(200).json({ message: "Rank changed successfully", result });
     } catch (error) {
