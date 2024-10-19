@@ -6,58 +6,71 @@ const app = express();
 app.use(express.json());
 
 const GROUP_ID = process.env.GROUP_ID;
-const ROBLOX_COOKIE = process.env.ROBLOSECURITY; // Use the ROBLOSECURITY environment variable
+const ROBLOX_COOKIE = process.env.ROBLOX_TOKEN; // Renamed for clarity (ROBLOX_TOKEN)
 
-let csrfToken = ''; // Cache CSRF Token
-let csrfTokenLastFetched = 0; // Track when the CSRF token was last fetched
-const CSRF_TOKEN_EXPIRATION = 600000; // 10 minutes in milliseconds
+// Log to confirm server start
+console.log('Starting server...');
 
 // Function to get CSRF Token
-async function getCsrfToken(forceRefresh = false) {
-    const now = Date.now();
-
-    // Check if CSRF token is expired or a refresh is forced
-    if (!csrfToken || forceRefresh || now - csrfTokenLastFetched > CSRF_TOKEN_EXPIRATION) {
-        try {
-            const response = await axios.post(
-                `https://auth.roblox.com/v1/login`, // This endpoint gives us a CSRF token without logging in
-                {},
-                {
-                    headers: {
-                        'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-            csrfToken = response.headers['x-csrf-token'];
-            csrfTokenLastFetched = now;
-            console.log("CSRF Token fetched successfully");
-        } catch (error) {
-            if (error.response && error.response.headers['x-csrf-token']) {
-                csrfToken = error.response.headers['x-csrf-token'];
-                csrfTokenLastFetched = now;
-                console.log("CSRF Token from error response:", csrfToken);
-            } else {
-                console.error('Failed to fetch CSRF token:', error.message);
-                throw error;
-            }
+async function getCsrfToken() {
+    try {
+        const response = await axios.post('https://auth.roblox.com/v2/logout', {}, {
+            headers: {
+                'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`,
+            },
+        });
+        return response.headers['x-csrf-token'];
+    } catch (error) {
+        if (error.response && error.response.status === 403) {
+            return error.response.headers['x-csrf-token'];
+        } else {
+            console.error('Failed to get CSRF token:', error.message);
+            throw error;
         }
     }
-    return csrfToken;
+}
+
+// Function to retrieve userId from username
+async function getUserIdFromUsername(username) {
+    try {
+        const userIdResponse = await axios.get(`https://users.roblox.com/v1/users/search?keyword=${username}`);
+        if (userIdResponse.data.data.length === 0) {
+            throw new Error('Player not found');
+        }
+        return userIdResponse.data.data[0].id;
+    } catch (error) {
+        console.error(`Error fetching userId for username ${username}:`, error.message);
+        throw error;
+    }
+}
+
+// Function to retrieve roleId from role name
+async function getRoleIdFromRoleName(roleName) {
+    try {
+        const rolesResponse = await axios.get(`https://groups.roblox.com/v1/groups/${GROUP_ID}/roles`);
+        const role = rolesResponse.data.roles.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+        if (!role) {
+            throw new Error('Role not found');
+        }
+        return role.id;
+    } catch (error) {
+        console.error(`Error fetching roleId for role name ${roleName}:`, error.message);
+        throw error;
+    }
 }
 
 // Function to set rank on Roblox group
-async function setRank(userId, rankId) {
-    await getCsrfToken(); // Ensure we have the CSRF token
+async function setRank(userId, roleId) {
+    const csrfToken = await getCsrfToken(); // Ensure we have the CSRF token
     try {
-        console.log(`Sending rank change request for userId: ${userId}, rankId: ${rankId}`);
+        console.log(`Sending rank change request for userId: ${userId}, roleId: ${roleId}`);
         const response = await axios.patch(
             `https://groups.roblox.com/v1/groups/${GROUP_ID}/users/${userId}`,
-            { roleId: rankId }, // Correct key name is roleId, not role
+            { roleId }, // Correct key name is roleId, not rankId
             {
                 headers: {
                     'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`,
-                    'X-CSRF-Token': csrfToken,
+                    'X-CSRF-TOKEN': csrfToken,
                     'Content-Type': 'application/json',
                 },
             }
@@ -65,10 +78,16 @@ async function setRank(userId, rankId) {
         console.log("Rank change response:", response.data);
         return response.data;
     } catch (error) {
+        // Handle roleset invalid error
+        if (error.response && error.response.data.errors && error.response.data.errors[0].code === 2) {
+            console.error("Invalid roleset or role does not exist. Please check your roleId.");
+            throw new Error('The roleset is invalid or does not exist.');
+        }
+
+        // If CSRF token is invalid, retry with a new token
         if (error.response && error.response.status === 403 && error.response.data.errors[0].code === 1) {
             console.log("Invalid CSRF Token, retrying...");
-            await getCsrfToken(true); // Force refresh CSRF token
-            return setRank(userId, rankId); // Retry the request
+            return setRank(userId, roleId); // Retry the request
         }
 
         console.error("Error setting rank:", error.response ? error.response.data : error.message);
@@ -76,27 +95,36 @@ async function setRank(userId, rankId) {
     }
 }
 
-// POST endpoint to change rank
+// POST endpoint to change rank based on username and role name
 app.post('/setRank', async (req, res) => {
-    const { userId, rankId } = req.body;
+    const { username, roleName } = req.body;
 
-    // Input validation
-    if (!userId || !rankId) {
-        return res.status(400).json({ error: "Missing userId or rankId" });
+    if (!username || !roleName) {
+        return res.status(400).json({ error: "Missing username or roleName" });
     }
 
     try {
-        console.log(`Received request to set rank for userId: ${userId}, rankId: ${rankId}`);
-        const result = await setRank(userId, rankId);
-        res.status(200).json({ message: "Rank changed successfully", result });
+        console.log(`Received request to set role for ${username} to ${roleName}`);
+
+        // Get userId from username
+        const userId = await getUserIdFromUsername(username);
+        console.log(`Retrieved user ID ${userId} for player ${username}`);
+
+        // Get roleId from role name
+        const roleId = await getRoleIdFromRoleName(roleName);
+        console.log(`Role ID for ${roleName}: ${roleId}`);
+
+        // Set rank (role) using userId and roleId
+        const result = await setRank(userId, roleId);
+        res.status(200).json({ message: `Role for ${username} updated to ${roleName}`, result });
     } catch (error) {
-        res.status(500).json({ error: "Failed to change rank", details: error.message });
+        res.status(500).json({ error: "Failed to set role", details: error.message });
     }
 });
 
-// Test route to verify the server is running
+// Root route to verify the server is running
 app.get('/', (req, res) => {
-    res.send("Rank change server is running.");
+    res.send('Rank change server is running.');
 });
 
 // Start server
