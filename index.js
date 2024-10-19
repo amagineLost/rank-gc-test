@@ -1,12 +1,12 @@
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 
 const app = express();
 app.use(express.json());
 
+// Environment variables for Render
 const GROUP_ID = process.env.GROUP_ID;
-const ROBLOX_COOKIE = process.env.ROBLOX_TOKEN; // Renamed for clarity (ROBLOX_TOKEN)
+const ROBLOX_COOKIE = process.env.ROBLOX_TOKEN; // Roblox authentication token (.ROBLOSECURITY)
 
 // Log to confirm server start
 console.log('Starting server...');
@@ -22,10 +22,11 @@ async function getCsrfToken() {
                 'Cookie': `.ROBLOSECURITY=${ROBLOX_COOKIE}`,
             },
         });
+        console.log('CSRF Token response headers:', response.headers); // Log headers for debugging
         return response.headers['x-csrf-token'];
     } catch (error) {
         if (error.response && error.response.status === 403) {
-            return error.response.headers['x-csrf-token'];
+            return error.response.headers['x-csrf-token']; // Return CSRF from 403 if provided
         } else if (error.response && error.response.status === 401) {
             console.error('Failed to get CSRF token: Unauthorized (401). Please check your ROBLOX_TOKEN.');
             throw error;
