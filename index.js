@@ -11,6 +11,9 @@ const ROBLOX_COOKIE = process.env.ROBLOX_TOKEN; // Renamed for clarity (ROBLOX_T
 // Log to confirm server start
 console.log('Starting server...');
 
+// Cache for userIds to reduce API requests and avoid rate limits
+const userIdCache = new Map();
+
 // Function to get CSRF Token
 async function getCsrfToken() {
     try {
@@ -23,6 +26,9 @@ async function getCsrfToken() {
     } catch (error) {
         if (error.response && error.response.status === 403) {
             return error.response.headers['x-csrf-token'];
+        } else if (error.response && error.response.status === 401) {
+            console.error('Failed to get CSRF token: Unauthorized (401). Please check your ROBLOX_TOKEN.');
+            throw error;
         } else {
             console.error('Failed to get CSRF token:', error.message);
             throw error;
@@ -30,15 +36,29 @@ async function getCsrfToken() {
     }
 }
 
-// Function to retrieve userId from username
+// Function to retrieve userId from username with retry and caching
 async function getUserIdFromUsername(username) {
+    if (userIdCache.has(username)) {
+        console.log(`Cache hit for username: ${username}`);
+        return userIdCache.get(username);
+    }
+
     try {
         const userIdResponse = await axios.get(`https://users.roblox.com/v1/users/search?keyword=${username}`);
         if (userIdResponse.data.data.length === 0) {
             throw new Error('Player not found');
         }
-        return userIdResponse.data.data[0].id;
+
+        const userId = userIdResponse.data.data[0].id;
+        userIdCache.set(username, userId); // Cache the userId
+        console.log(`Retrieved userId ${userId} for username ${username}`);
+        return userId;
     } catch (error) {
+        if (error.response && error.response.status === 429) {
+            console.error(`Rate limit hit while fetching userId for ${username}. Retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retrying
+            return getUserIdFromUsername(username); // Retry fetching the userId
+        }
         console.error(`Error fetching userId for username ${username}:`, error.message);
         throw error;
     }
@@ -52,6 +72,7 @@ async function getRoleIdFromRoleName(roleName) {
         if (!role) {
             throw new Error('Role not found');
         }
+        console.log(`Role ID for ${roleName}: ${role.id}`);
         return role.id;
     } catch (error) {
         console.error(`Error fetching roleId for role name ${roleName}:`, error.message);
@@ -108,11 +129,9 @@ app.post('/setRank', async (req, res) => {
 
         // Get userId from username
         const userId = await getUserIdFromUsername(username);
-        console.log(`Retrieved user ID ${userId} for player ${username}`);
 
         // Get roleId from role name
         const roleId = await getRoleIdFromRoleName(roleName);
-        console.log(`Role ID for ${roleName}: ${roleId}`);
 
         // Set rank (role) using userId and roleId
         const result = await setRank(userId, roleId);
